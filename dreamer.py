@@ -110,7 +110,7 @@ class Dreamer(tools.Module):
   def __call__(self, obs, reset, state=None, training=True):
     step = self._step.numpy().item()
     tf.summary.experimental.set_step(step)
-    if state is not None and reset.any():
+    if state is not None and reset.any(): # 如果 reset=True , 乘以0
       mask = tf.cast(1 - reset, self._float)[:, None]
       state = tf.nest.map_structure(lambda x: x * mask, state)
     if self._should_train(step):
@@ -119,8 +119,8 @@ class Dreamer(tools.Module):
       print(f'Training for {n} steps.')
       with self._strategy.scope():
         for train_step in range(n):
-          log_images = self._c.log_images and log and train_step == 0
-          self.train(next(self._dataset), log_images)
+          log_images = self._c.log_images and log and train_step == 0 # train step 以外算向量
+          self.train(next(self._dataset), log_images) # 從 dataset 抽 experience trained
       if log:
         self._write_summaries()
     action, state = self.policy(obs, state, training)
@@ -131,17 +131,17 @@ class Dreamer(tools.Module):
   @tf.function
   def policy(self, obs, state, training):
     if state is None:
-      latent = self._dynamics.initial(len(obs['image']))
-      action = tf.zeros((len(obs['image']), self._actdim), self._float)
+      latent = self._dynamics.initial(len(obs['image'])) # 產生一個全空的初始隱藏狀態
+      action = tf.zeros((len(obs['image']), self._actdim), self._float) # 產生 action 0
     else:
       latent, action = state
-    embed = self._encode(preprocess(obs, self._c))
-    latent, _ = self._dynamics.obs_step(latent, action, embed)
-    feat = self._dynamics.get_feat(latent)
+    embed = self._encode(preprocess(obs, self._c)) # 圖片轉向量
+    latent, _ = self._dynamics.obs_step(latent, action, embed) # 更新
+    feat = self._dynamics.get_feat(latent) # 把 latent 裡的 deter和 stoch 黏在一起
     if training:
       action = self._actor(feat).sample()
     else:
-      action = self._actor(feat).mode()
+      action = self._actor(feat).mode)  # 找最高分
     action = self._exploration(action, training)
     state = (latent, action)
     return action, state
@@ -157,18 +157,19 @@ class Dreamer(tools.Module):
   def _train(self, data, log_images):
     with tf.GradientTape() as model_tape:
       embed = self._encode(data)
-      post, prior = self._dynamics.observe(embed, data['action'])
-      feat = self._dynamics.get_feat(post)
+      post, prior = self._dynamics.observe(embed, data['action']) # 修改記憶
+      feat = self._dynamics.get_feat(post) 
       image_pred = self._decode(feat)
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
-      likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
-      if self._c.pcont:
-        pcont_pred = self._pcont(feat)
+      likes.image = tf.reduce_mean(image_pred.log_prob(data['image'])) # 機率分布打分
+      likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))  # 機率分布打分
+      if self._c.pcont: # 持續機率
+        pcont_pred = self._pcont(feat) # feat 丟入 DenseDecoder, 伯努利分佈算出機率
         pcont_target = self._c.discount * data['discount']
-        likes.pcont = tf.reduce_mean(pcont_pred.log_prob(pcont_target))
-        likes.pcont *= self._c.pcont_scale
+        likes.pcont = tf.reduce_mean(pcont_pred.log_prob(pcont_target)) # 打分->使用對數機率, Score = target*log(p)+(1-target)*log(1-p)
+        likes.pcont *= self._c.pcont_scale # 調整權重
+      # KL
       prior_dist = self._dynamics.get_dist(prior)
       post_dist = self._dynamics.get_dist(post)
       div = tf.reduce_mean(tfd.kl_divergence(post_dist, prior_dist))
@@ -179,11 +180,11 @@ class Dreamer(tools.Module):
     with tf.GradientTape() as actor_tape:
       imag_feat = self._imagine_ahead(post)
       reward = self._reward(imag_feat).mode()
-      if self._c.pcont:
+      if self._c.pcont: # 猜存活率
         pcont = self._pcont(imag_feat).mean()
       else:
         pcont = self._c.discount * tf.ones_like(reward)
-      value = self._value(imag_feat).mode()
+      value = self._value(imag_feat).mode() 
       returns = tools.lambda_return(
           reward[:-1], value[:-1], pcont[:-1],
           bootstrap=value[-1], lambda_=self._c.disclam, axis=0)
@@ -198,7 +199,7 @@ class Dreamer(tools.Module):
       value_loss = -tf.reduce_mean(discount * value_pred.log_prob(target))
       value_loss /= float(self._strategy.num_replicas_in_sync)
 
-    model_norm = self._model_opt(model_tape, model_loss)
+    model_norm = self._model_opt(model_tape, model_loss) # 更新世界模型
     actor_norm = self._actor_opt(actor_tape, actor_loss)
     value_norm = self._value_opt(value_tape, value_loss)
 
@@ -208,6 +209,7 @@ class Dreamer(tools.Module):
             data, feat, prior_dist, post_dist, likes, div,
             model_loss, value_loss, actor_loss, model_norm, value_norm,
             actor_norm)
+      # 把圖像畫出來
       if tf.equal(log_images, True):
         self._image_summaries(data, embed, image_pred)
 
@@ -241,6 +243,7 @@ class Dreamer(tools.Module):
     # Do a train step to initialize all variables, including optimizer
     # statistics. Ideally, we would use batch size zero, but that doesn't work
     # in multi-GPU mode.
+    # 模型剛組裝好，立刻塞一筆資料跑一次訓練
     self.train(next(self._dataset))
 
   def _exploration(self, action, training):
