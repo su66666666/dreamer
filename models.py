@@ -31,10 +31,10 @@ class RSSM(tools.Module):
       state = self.initial(tf.shape(action)[0]) # wrappers.py
     embed = tf.transpose(embed, [1, 0, 2]) #[batch, time, feature] ->[time, batch, feature]
     action = tf.transpose(action, [1, 0, 2])
-    post, prior = tools.static_scan(
-        lambda prev, inputs: self.obs_step(prev[0], *inputs),
+    post, prior = tools.static_scan(     # 把迴圈邏輯展開成計算圖, for很慢
+        lambda prev, inputs: self.obs_step(prev[0], *inputs),   #(運算邏輯, 輸入序列, 初始狀態),(lamda, inputs, prev) lamda是臨時函數
         (action, embed), (state, state))
-    post = {k: tf.transpose(v, [1, 0, 2]) for k, v in post.items()}
+    post = {k: tf.transpose(v, [1, 0, 2]) for k, v in post.items()} # 還原順序, v去轉置, post : 'mean':  <張量A>
     prior = {k: tf.transpose(v, [1, 0, 2]) for k, v in prior.items()}
     return post, prior
 
