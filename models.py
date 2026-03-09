@@ -26,13 +26,13 @@ class RSSM(tools.Module):
         deter=self._cell.get_initial_state(None, batch_size, dtype))
 
   @tf.function # 計算快速
-  def observe(self, embed, action, state=None):
+  def observe(self, embed, action, state=None): # 有 embed
     if state is None:
       state = self.initial(tf.shape(action)[0]) # wrappers.py
     embed = tf.transpose(embed, [1, 0, 2]) #[batch, time, feature] ->[time, batch, feature]
     action = tf.transpose(action, [1, 0, 2])
     post, prior = tools.static_scan(     # 把迴圈邏輯展開成計算圖, for很慢
-        lambda prev, inputs: self.obs_step(prev[0], *inputs),   #(運算邏輯, 輸入序列, 初始狀態),(lamda, inputs, prev) lamda是臨時函數
+        lambda prev, inputs: self.obs_step(prev[0], *inputs),   #(運算邏輯, 輸入序列, 初始狀態),(lamda, inputs, prev) lambda是臨時函數
         (action, embed), (state, state))
     post = {k: tf.transpose(v, [1, 0, 2]) for k, v in post.items()} # 還原順序, v去轉置, post : 'mean':  <張量A>
     prior = {k: tf.transpose(v, [1, 0, 2]) for k, v in prior.items()}
@@ -42,26 +42,26 @@ class RSSM(tools.Module):
   def imagine(self, action, state=None):
     if state is None:
       state = self.initial(tf.shape(action)[0])
-    assert isinstance(state, dict), state
+    assert isinstance(state, dict), state # 檢查 state是字典
     action = tf.transpose(action, [1, 0, 2])
-    prior = tools.static_scan(self.img_step, action, state)
+    prior = tools.static_scan(self.img_step, action, state) 
     prior = {k: tf.transpose(v, [1, 0, 2]) for k, v in prior.items()}
     return prior
 
   def get_feat(self, state):
-    return tf.concat([state['stoch'], state['deter']], -1)
+    return tf.concat([state['stoch'], state['deter']], -1) # 將記憶跟狀態拼接在一起成長向量
 
   def get_dist(self, state):
-    return tfd.MultivariateNormalDiag(state['mean'], state['std'])
+    return tfd.MultivariateNormalDiag(state['mean'], state['std']) # 預測準確度的機率
 
   @tf.function
   def obs_step(self, prev_state, prev_action, embed):
-    prior = self.img_step(prev_state, prev_action)
-    x = tf.concat([prior['deter'], embed], -1)
-    x = self.get('obs1', tfkl.Dense, self._hidden_size, self._activation)(x)
+    prior = self.img_step(prev_state, prev_action) # 先驗
+    x = tf.concat([prior['deter'], embed], -1) # deter -> 先驗的確定的 , stoch -> 隨機
+    x = self.get('obs1', tfkl.Dense, self._hidden_size, self._activation)(x) # 第一層全連階層
     x = self.get('obs2', tfkl.Dense, 2 * self._stoch_size, None)(x)
-    mean, std = tf.split(x, 2, -1)
-    std = tf.nn.softplus(std) + 0.1
+    mean, std = tf.split(x, 2, -1) # (被切的對象, 切成幾等分, 維度)
+    std = tf.nn.softplus(std) + 0.1 
     stoch = self.get_dist({'mean': mean, 'std': std}).sample()
     post = {'mean': mean, 'std': std, 'stoch': stoch, 'deter': prior['deter']}
     return post, prior
@@ -71,7 +71,7 @@ class RSSM(tools.Module):
     x = tf.concat([prev_state['stoch'], prev_action], -1)
     x = self.get('img1', tfkl.Dense, self._hidden_size, self._activation)(x)
     x, deter = self._cell(x, [prev_state['deter']])
-    deter = deter[0]  # Keras wraps the state in a list.
+    deter = deter[0]  # Keras wraps the state in a list. # 更新 deter
     x = self.get('img2', tfkl.Dense, self._hidden_size, self._activation)(x)
     x = self.get('img3', tfkl.Dense, 2 * self._stoch_size, None)(x)
     mean, std = tf.split(x, 2, -1)
@@ -81,7 +81,7 @@ class RSSM(tools.Module):
     return prior
 
 
-class ConvEncoder(tools.Module):
+class ConvEncoder(tools.Module): # 影像轉數學
 
   def __init__(self, depth=32, act=tf.nn.relu):
     self._act = act
@@ -89,7 +89,7 @@ class ConvEncoder(tools.Module):
 
   def __call__(self, obs):
     kwargs = dict(strides=2, activation=self._act)
-    x = tf.reshape(obs['image'], (-1,) + tuple(obs['image'].shape[-3:]))
+    x = tf.reshape(obs['image'], (-1,) + tuple(obs['image'].shape[-3:])) # 把影片變成一疊照片
     x = self.get('h1', tfkl.Conv2D, 1 * self._depth, 4, **kwargs)(x)
     x = self.get('h2', tfkl.Conv2D, 2 * self._depth, 4, **kwargs)(x)
     x = self.get('h3', tfkl.Conv2D, 4 * self._depth, 4, **kwargs)(x)
@@ -98,7 +98,7 @@ class ConvEncoder(tools.Module):
     return tf.reshape(x, shape)
 
 
-class ConvDecoder(tools.Module):
+class ConvDecoder(tools.Module): # 數學轉圖片
 
   def __init__(self, depth=32, act=tf.nn.relu, shape=(64, 64, 3)):
     self._act = act
@@ -107,7 +107,7 @@ class ConvDecoder(tools.Module):
 
   def __call__(self, features):
     kwargs = dict(strides=2, activation=self._act)
-    x = self.get('h1', tfkl.Dense, 32 * self._depth, None)(features)
+    x = self.get('h1', tfkl.Dense, 32 * self._depth, None)(features) # Dense 把特徵向量加長，然後 reshape 成 1x1 的圖片
     x = tf.reshape(x, [-1, 1, 1, 32 * self._depth])
     x = self.get('h2', tfkl.Conv2DTranspose, 4 * self._depth, 5, **kwargs)(x)
     x = self.get('h3', tfkl.Conv2DTranspose, 2 * self._depth, 5, **kwargs)(x)
@@ -117,7 +117,7 @@ class ConvDecoder(tools.Module):
     return tfd.Independent(tfd.Normal(mean, 1), len(self._shape))
 
 
-class DenseDecoder(tools.Module):
+class DenseDecoder(tools.Module): # 預測非影像資訊
 
   def __init__(self, shape, layers, units, dist='normal', act=tf.nn.elu):
     self._shape = shape
@@ -131,15 +131,17 @@ class DenseDecoder(tools.Module):
     for index in range(self._layers):
       x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
     x = self.get(f'hout', tfkl.Dense, np.prod(self._shape))(x)
+    
     x = tf.reshape(x, tf.concat([tf.shape(features)[:-1], self._shape], 0))
-    if self._dist == 'normal':
-      return tfd.Independent(tfd.Normal(x, 1), len(self._shape))
-    if self._dist == 'binary':
-      return tfd.Independent(tfd.Bernoulli(x), len(self._shape))
+    
+    if self._dist == 'normal': # if 預測 reward
+      return tfd.Independent(tfd.Normal(x, 1), len(self._shape)) # 回傳高斯分布
+    if self._dist == 'binary': # if 預測 Terminal
+      return tfd.Independent(tfd.Bernoulli(x), len(self._shape)) # 回傳一個伯努利分佈
     raise NotImplementedError(self._dist)
 
 
-class ActionDecoder(tools.Module):
+class ActionDecoder(tools.Module): # actor
 
   def __init__(
       self, size, layers, units, dist='tanh_normal', act=tf.nn.elu,
@@ -154,7 +156,7 @@ class ActionDecoder(tools.Module):
     self._mean_scale = mean_scale
 
   def __call__(self, features):
-    raw_init_std = np.log(np.exp(self._init_std) - 1)
+    raw_init_std = np.log(np.exp(self._init_std) - 1) # 探索
     x = features
     for index in range(self._layers):
       x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
@@ -162,10 +164,10 @@ class ActionDecoder(tools.Module):
       # https://www.desmos.com/calculator/rcmcf5jwe7
       x = self.get(f'hout', tfkl.Dense, 2 * self._size)(x)
       mean, std = tf.split(x, 2, -1)
-      mean = self._mean_scale * tf.tanh(mean / self._mean_scale)
+      mean = self._mean_scale * tf.tanh(mean / self._mean_scale) # action tou
       std = tf.nn.softplus(std + raw_init_std) + self._min_std
       dist = tfd.Normal(mean, std)
-      dist = tfd.TransformedDistribution(dist, tools.TanhBijector())
+      dist = tfd.TransformedDistribution(dist, tools.TanhBijector()) # 轉換擠壓
       dist = tfd.Independent(dist, 1)
       dist = tools.SampleDist(dist)
     elif self._dist == 'onehot':
