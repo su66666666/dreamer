@@ -1,8 +1,8 @@
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras import layers as tfkl
+import tensorflow as tf  # 負責數學運算
+from tensorflow.keras import layers as tfkl 
 from tensorflow_probability import distributions as tfd
-from tensorflow.keras.mixed_precision import experimental as prec
+from tensorflow.keras.mixed_precision import experimental as prec # 精度
 
 import tools
 
@@ -15,21 +15,21 @@ class RSSM(tools.Module):
     self._stoch_size = stoch
     self._deter_size = deter
     self._hidden_size = hidden
-    self._cell = tfkl.GRUCell(self._deter_size)
+    self._cell = tfkl.GRUCell(self._deter_size) # GRUCell 記住長時間記憶 
 
   def initial(self, batch_size):
-    dtype = prec.global_policy().compute_dtype
+    dtype = prec.global_policy().compute_dtype # 找數字 type
     return dict(
         mean=tf.zeros([batch_size, self._stoch_size], dtype),
         std=tf.zeros([batch_size, self._stoch_size], dtype),
         stoch=tf.zeros([batch_size, self._stoch_size], dtype),
         deter=self._cell.get_initial_state(None, batch_size, dtype))
 
-  @tf.function
+  @tf.function # 計算快速
   def observe(self, embed, action, state=None):
     if state is None:
-      state = self.initial(tf.shape(action)[0])
-    embed = tf.transpose(embed, [1, 0, 2])
+      state = self.initial(tf.shape(action)[0]) # wrappers.py
+    embed = tf.transpose(embed, [1, 0, 2]) #[batch, time, feature] ->[time, batch, feature]
     action = tf.transpose(action, [1, 0, 2])
     post, prior = tools.static_scan(
         lambda prev, inputs: self.obs_step(prev[0], *inputs),
