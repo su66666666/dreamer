@@ -42,10 +42,10 @@ class DeepMindControl:
     return gym.spaces.Box(spec.minimum, spec.maximum, dtype=np.float32)
 
   def step(self, action):
-    time_step = self._env.step(action)
+    time_step = self._env.step(action) # 執行動作
     obs = dict(time_step.observation)
-    obs['image'] = self.render()
-    reward = time_step.reward or 0
+    obs['image'] = self.render)  #把 obervation 畫成圖片
+    reward = time_step.reward or 0 
     done = time_step.last()
     info = {'discount': np.array(time_step.discount, np.float32)}
     return obs, reward, done, info
@@ -121,11 +121,11 @@ class Atari:
       total_reward += reward
       if self._life_done:
         lives = self._env.ale.lives()
-        done = done or lives < self._lives
+        done = done or lives < self._lives # 輸了一條命就輸了
         self._lives = lives
       if done:
         break
-      elif step >= self._action_repeat - 2:
+      elif step >= self._action_repeat - 2: # 確保不會只有最後一張沒有那個物品，取最後兩張
         index = step - (self._action_repeat - 2)
         if self._grayscale:
           self._env.ale.getScreenGrayscale(self._buffers[index])
@@ -147,7 +147,7 @@ class Atari:
     return {'image': image}
 
 
-class Collect:
+class Collect: # 紀錄
 
   def __init__(self, env, callbacks=None, precision=32):
     self._env = env
@@ -296,7 +296,7 @@ class ObsDict:
     return obs
 
 
-class OneHotAction:
+class OneHotAction: # 整數轉向量
 
   def __init__(self, env):
     assert isinstance(env.action_space, gym.spaces.Discrete)
