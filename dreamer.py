@@ -252,8 +252,8 @@ class Dreamer(tools.Module):
       if self._c.expl_decay:
         amount *= 0.5 ** (tf.cast(self._step, tf.float32) / self._c.expl_decay)
       if self._c.expl_min:
-        amount = tf.maximum(self._c.expl_min, amount)
-      self._metrics['expl_amount'].update_state(amount)
+        amount = tf.maximum(self._c.expl_min, amount) # 保底的 exploration
+      self._metrics['expl_amount'].update_state(amount) # 紀錄 exploration
     elif self._c.eval_noise:
       amount = self._c.eval_noise
     else:
@@ -262,7 +262,7 @@ class Dreamer(tools.Module):
       return tf.clip_by_value(tfd.Normal(action, amount).sample(), -1, 1)
     if self._c.expl == 'completely_random':
       return tf.random.uniform(action.shape, -1, 1)
-    if self._c.expl == 'epsilon_greedy':
+    if self._c.expl == 'epsilon_greedy': # 離散
       indices = tfd.Categorical(0 * action).sample()
       return tf.where(
           tf.random.uniform(action.shape[:1], 0, 1) < amount,
