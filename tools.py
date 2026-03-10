@@ -115,8 +115,8 @@ def simulate(agent, envs, steps=0, episodes=0, state=None):
       for index, promise in zip(indices, promises):
         obs[index] = promise()
     # Step agents.
-    obs = {k: np.stack([o[k] for o in obs]) for k in obs[0]}
-    action, agent_state = agent(obs, done, agent_state)
+    obs = {k: np.stack([o[k] for o in obs]) for k in obs[0]} # 把多個畫面疊起來
+    action, agent_state = agent(obs, done, agent_state) # 丟給 agent
     action = np.array(action)
     assert len(action) == len(envs)
     # Step envs.
@@ -124,8 +124,8 @@ def simulate(agent, envs, steps=0, episodes=0, state=None):
     obs, _, done = zip(*[p()[:3] for p in promises])
     obs = list(obs)
     done = np.stack(done)
-    episode += int(done.sum())
-    length += 1
+    episode += int(done.sum()) # 結束幾局
+    length += 1 
     step += (done * length).sum()
     length *= (1 - done)
   # Return new state to allow resuming the simulation.
@@ -200,7 +200,7 @@ class DummyEnv:
     return gym.spaces.Dict(spaces)
 
   @property
-  def action_space(self):
+  def action_space(self): # 可以做的 action
     low = -np.ones([5], dtype=np.float32)
     high = np.ones([5], dtype=np.float32)
     return gym.spaces.Box(low, high)
@@ -234,12 +234,12 @@ class SampleDist:
 
   def mean(self):
     samples = self._dist.sample(self._samples)
-    return tf.reduce_mean(samples, 0)
+    return tf.reduce_mean(samples, 0) # mean
 
   def mode(self):
     sample = self._dist.sample(self._samples)
     logprob = self._dist.log_prob(sample)
-    return tf.gather(sample, tf.argmax(logprob))[0]
+    return tf.gather(sample, tf.argmax(logprob))[0] # 機率最大的
 
   def entropy(self):
     sample = self._dist.sample(self._samples)
@@ -247,7 +247,7 @@ class SampleDist:
     return -tf.reduce_mean(logprob, 0)
 
 
-class OneHotDist:
+class OneHotDist: # 離散
 
   def __init__(self, logits=None, probs=None):
     self._dist = tfd.Categorical(logits=logits, probs=probs)
@@ -295,10 +295,10 @@ class TanhBijector(tfp.bijectors.Bijector):
         validate_args=validate_args,
         name=name)
 
-  def _forward(self, x):
+  def _forward(self, x): # 將神經網路的無限輸出(-1, 1)
     return tf.nn.tanh(x)
 
-  def _inverse(self, y):
+  def _inverse(self, y): # 從動作 (-1, 1) 還原回原始數值
     dtype = y.dtype
     y = tf.cast(y, tf.float32)
     y = tf.where(
@@ -319,14 +319,14 @@ def lambda_return(
   # Setting lambda=0 gives a fixed 1-step return.
   assert reward.shape.ndims == value.shape.ndims, (reward.shape, value.shape)
   if isinstance(pcont, (int, float)):
-    pcont = pcont * tf.ones_like(reward)
+    pcont = pcont * tf.ones_like(reward) # pcout 維度跟 reward 相等
   dims = list(range(reward.shape.ndims))
   dims = [axis] + dims[1:axis] + [0] + dims[axis + 1:]
   if axis != 0:
     reward = tf.transpose(reward, dims)
     value = tf.transpose(value, dims)
     pcont = tf.transpose(pcont, dims)
-  if bootstrap is None:
+  if bootstrap is None: # bootstrap -> 從邊界點往後看的所有預估分數
     bootstrap = tf.zeros_like(value[-1])
   next_values = tf.concat([value[1:], bootstrap[None]], 0)
   inputs = reward + pcont * next_values * (1 - lambda_)
