@@ -254,67 +254,81 @@ class Dreamer(tools.Module):
       if self._c.expl_min:
         amount = tf.maximum(self._c.expl_min, amount) # 保底的 exploration
       self._metrics['expl_amount'].update_state(amount) # 紀錄 exploration
-    elif self._c.eval_noise:
+    elif self._c.eval_noise: # 加大噪音
       amount = self._c.eval_noise
     else:
       return action
     if self._c.expl == 'additive_gaussian':
-      return tf.clip_by_value(tfd.Normal(action, amount).sample(), -1, 1)
+      return tf.clip_by_value(tfd.Normal(action, amount).sample(), -1, 1) # action + 高斯分布
     if self._c.expl == 'completely_random':
-      return tf.random.uniform(action.shape, -1, 1)
+      return tf.random.uniform(action.shape, -1, 1) # 隨機動作
     if self._c.expl == 'epsilon_greedy': # 離散
-      indices = tfd.Categorical(0 * action).sample()
+      indices = tfd.Categorical(0 * action).sample)  #隨機抽編號
       return tf.where(
           tf.random.uniform(action.shape[:1], 0, 1) < amount,
           tf.one_hot(indices, action.shape[-1], dtype=self._float),
-          action)
+          action) # 如果隨機抽編號小於 amount，執行隨機動作；否則回傳原本的 action
     raise NotImplementedError(self._c.expl)
 
   def _imagine_ahead(self, post):
     if self._c.pcont:  # Last step could be terminal.
-      post = {k: v[:, :-1] for k, v in post.items()}
+      post = {k: v[:, :-1] for k, v in post.items()} # 將最後刪掉
     flatten = lambda x: tf.reshape(x, [-1] + list(x.shape[2:]))
-    start = {k: flatten(v) for k, v in post.items()}
-    policy = lambda state: self._actor(
-        tf.stop_gradient(self._dynamics.get_feat(state))).sample()
+    start = {k: flatten(v) for k, v in post.items()} # 所有過去的經驗都當作夢境起點
+    # policy
+    policy = lambda state: self._actor( # lambda state 給 state 回傳一個動作 , self._dynamics.get_feat(state) 把抽象的狀態轉成 Actor 看得懂的特徵向量, sample()-> 抽樣
+        tf.stop_gradient(self._dynamics.get_feat(state))).sample() # 不會動到 world model
+    # 連續模擬未來
     states = tools.static_scan(
         lambda prev, _: self._dynamics.img_step(prev, policy(prev)),
-        tf.range(self._c.horizon), start)
-    imag_feat = self._dynamics.get_feat(states)
+        tf.range(self._c.horizon), start) # 拿現在的狀態 -> 呼叫 Policy  -> Dynamics 預測下一秒的狀態
+    imag_feat = self._dynamics.get_feat(states) # Latent States 轉換成特徵向量，準備用來算分數
     return imag_feat
 
   def _scalar_summaries(
       self, data, feat, prior_dist, post_dist, likes, div,
       model_loss, value_loss, actor_loss, model_norm, value_norm,
       actor_norm):
+    # 監控梯度
     self._metrics['model_grad_norm'].update_state(model_norm)
     self._metrics['value_grad_norm'].update_state(value_norm)
     self._metrics['actor_grad_norm'].update_state(actor_norm)
+    #　監控不確定性
     self._metrics['prior_ent'].update_state(prior_dist.entropy())
     self._metrics['post_ent'].update_state(post_dist.entropy())
-    for name, logprob in likes.items():
+    # 監控準確率
+    for name, logprob in likes.items():　
       self._metrics[name + '_loss'].update_state(-logprob)
+    # 監控 divergence
     self._metrics['div'].update_state(div)
+    # loss
     self._metrics['model_loss'].update_state(model_loss)
     self._metrics['value_loss'].update_state(value_loss)
     self._metrics['actor_loss'].update_state(actor_loss)
+    # 多樣性
     self._metrics['action_ent'].update_state(self._actor(feat).entropy())
 
   def _image_summaries(self, data, embed, image_pred):
     truth = data['image'][:6] + 0.5
-    recon = image_pred.mode()[:6]
+    recon = image_pred.mode()[:6] # reconstruction
     init, _ = self._dynamics.observe(embed[:6, :5], data['action'][:6, :5])
+    # 最後一個狀態當 state
     init = {k: v[:, -1] for k, v in init.items()}
+    # 透過 action 猜測 state
     prior = self._dynamics.imagine(data['action'][:6, 5:], init)
+    # decode
     openl = self._decode(self._dynamics.get_feat(prior)).mode()
+    # 前面連接後面預測
     model = tf.concat([recon[:, :5] + 0.5, openl + 0.5], 1)
+    # 計算誤差
     error = (model - truth + 1) / 2
+    # 真實預測誤差結合
     openl = tf.concat([truth, model, error], 2)
     tools.graph_summary(
         self._writer, tools.video_summary, 'agent/openl', openl)
 
   def _write_summaries(self):
-    step = int(self._step.numpy())
+    step = int(self._step.numpy()) # 當前訓練步數
     metrics = [(k, float(v.result())) for k, v in self._metrics.items()]
     if self._last_log is not None:
       duration = time.time() - self._last_time
@@ -334,6 +348,7 @@ def preprocess(obs, config):
   obs = obs.copy()
   with tf.device('cpu:0'):
     obs['image'] = tf.cast(obs['image'], dtype) / 255.0 - 0.5
+    # 避免 reward 爆炸
     clip_rewards = dict(none=lambda x: x, tanh=tf.tanh)[config.clip_rewards]
     obs['reward'] = clip_rewards(obs['reward'])
   return obs
@@ -358,13 +373,13 @@ def load_dataset(directory, config):
 
 
 def summarize_episode(episode, config, datadir, writer, prefix):
-  episodes, steps = tools.count_episodes(datadir)
+  episodes, steps = tools.count_episodes(datadir) # 統計玩幾局
   length = (len(episode['reward']) - 1) * config.action_repeat
   ret = episode['reward'].sum()
   print(f'{prefix.title()} episode of length {length} with return {ret:.1f}.')
   metrics = [
-      (f'{prefix}/return', float(episode['reward'].sum())),
-      (f'{prefix}/length', len(episode['reward']) - 1),
+      (f'{prefix}/return', float(episode['reward'].sum())), # 分數
+      (f'{prefix}/length', len(episode['reward']) - 1), # 時間
       (f'episodes', episodes)]
   step = count_steps(datadir, config)
   with (config.logdir / 'metrics.jsonl').open('a') as f:
@@ -446,6 +461,7 @@ def main(config):
         functools.partial(agent, training=False), test_envs, episodes=1)
     writer.flush()
     print('Start collection.')
+    # 更新神經網路、權重
     steps = config.eval_every // config.action_repeat
     state = tools.simulate(agent, train_envs, steps, state=state)
     step = count_steps(datadir, config)
